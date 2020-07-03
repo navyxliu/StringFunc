@@ -1,0 +1,14 @@
+plugins {
+    id "me.champeau.gradle.jmh" version "0.5.0"
+}
+
+repositories {
+    mavenCentral()
+}
+
+apply plugin: 'java'
+apply plugin: 'idea'
+
+sourceSets {
+    jmh.java.srcDir "src"
+}
