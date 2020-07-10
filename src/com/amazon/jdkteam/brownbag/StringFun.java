@@ -70,6 +70,34 @@ public class StringFun {
         }
     }
 
+    @Benchmark
+    @BenchmarkMode(Mode.Throughput)
+    public void string_non_escaped_substring(Blackhole bh) {
+        String sub = base.substring(2);
+        String sub2 = sub.substring(5);
+        boolean result = false;
+
+        if (sub.charAt(0) ==  sub2.charAt(0)) {
+            result = true;
+        }
+        bh.consume(result);
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.Throughput)
+    public void string_split_and_filter(Blackhole bh) {
+        String[] subs = base.split(" ");
+        List<String> filtered = new ArrayList<>();
+
+        for (String w : subs) {
+            char initial = w.charAt(0);
+            if (initial >= 'A' && initial <= 'Z') {
+                filtered.add(w);
+            }
+        }
+
+        bh.consume(filtered);
+    }
 
     private final static boolean verbose = false;
     private final static String base = "I knew I could always get round him and I gave him all the pleasure I could " + 
