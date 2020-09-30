@@ -110,6 +110,15 @@ public final class StringLite implements CharSequence {
         return where;
     }
 
+    public boolean startsWith(String prefix) {
+        if (end - begin < prefix.length()) return false;
+
+        for (int i=0; i<prefix.length(); ++i) {
+            if (base.charAt(i + begin) != prefix.charAt(i)) return false;
+        }
+        return true;
+    }
+
     public static StringLite substring(String base, int beginIndex, int endIndex) {
         StringLite lite = new StringLite(base, beginIndex, endIndex);
         return lite;
