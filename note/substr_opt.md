@@ -41,7 +41,7 @@ This transformation reveals the potential of inter-procedural opportunity. Excep
 
 ![dontinline_substring_and_dontinline_append.png](resources/6215FD60DE005940A4FA4D8C5C8F74B3.png)
 
-Similar to the prior example, we can use API simplification to 
+Similar to the prior example, we can use API simplification to get:
 
 ```
  public static void toSB(String s, StringBuilder sb) {
@@ -55,19 +55,21 @@ https://github.com/navyxliu/StringFunc/blob/master/src/com/amazon/jdkteam/brownb
 
 ```
 public static String splitAndUse(String path) {
- return path.split("\")[0];
+ return path.split("/")[0];
 }
 ```
 
-It’s not uncommon to see Java programmers split a long string but only use part of results. If path can split into thousands of components, Java actually returns a container filled with thousands of new substrings. Without inter-procedural analysis, C2 has no idea that only a small fraction of objects are used.
+It’s not uncommon to see Java programmers split a long string but only use a couple of results. If path can split into thousands of components, JavaVM actually returns an array filled with thousands of new substrings. Without inter-procedural analysis, C2 has no idea that only a small fraction of result are used.
 
-C2 can infer the range of indices which accesses path.split("\\"). If the maximal index is a constant, C2 actually can add a threshold to split("\"). It limits the size of result containers. 
+String.split() provides a less popular overloaded method split("regex", limit), which throttles the resulting array. After Inlining and constant propagation, C2 can infer the maximal index which accesses path.split("/"). If it is a constant, C2 can make use of the overloaded version of split().
 
 ```
 public String static splitAndUse(String path) {
- return path.split("\", 1/*limit*/)[0];
+ return path.split("/", 1/*limit*/)[0];
 }
 ```
+
+https://github.com/navyxliu/StringFunc/blob/master/src/com/amazon/jdkteam/brownbag/SplitAndPick.java#L62
 
 ### General solution outliner
 
