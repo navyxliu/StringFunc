@@ -47,6 +47,7 @@ public class SplitAndPick {
         StringBuilder sb = new StringBuilder(base);
 
         while(sb.length() < length) {
+            sb.append(SEP);
             sb.append(base);
         }
         input = sb.toString();
@@ -60,9 +61,5 @@ public class SplitAndPick {
     @Benchmark
     public String splitAndPick_wisely() {
         return input.split(SEP, 2)[1];
-    }
-
-    public static void main(String[] args) {
-       System.out.print(base.split(SEP, 2)[1]);
     }
 }
