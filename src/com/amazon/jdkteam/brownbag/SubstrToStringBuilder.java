@@ -50,3 +50,4 @@ public class SubstrToStringBuilder {
         System.out.println(bench.substring2SB_noalloc());
     }
 }
+
