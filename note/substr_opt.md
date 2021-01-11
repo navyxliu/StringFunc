@@ -1,78 +1,84 @@
-# Java Substring Opto
+# Java Substring Optimization
 
-## Introduction
+## Problem
 
-String.substring creates a new String object since jdk7. Collecting substring objects has been the job of garbage collectors since then. Otherwise, library and application developers may cause memory leaking by holding reference of parent strings. 
+String.substring creates a new String object since jdk7. Collecting substring objects has been the job of garbage collectors since then. Otherwise, library and application developers may cause memory leaking by holding reference of parent strings.
+Sometimes, Java developers just create a temporary substring for a simple pattern matching.
 
-### Idiomatic use of substring
-
-1. substring|startsWith pair
-
+Example-1: read-only substring
 ```
  public static boolean foo(String s) {
   return s.substring(1).startsWith("a");
  }
 ```
 
-![dontinline_substring_but_inline_startswith.png](resources/B74320FF99475827A0091BCB402B247A.png)
-
-We’d like to introduce a technique called “API simplification”. C2 can roughly translate the pair to the following snippet. It’s not high-fidelity, but it’s close. 
-
-```
- public static boolean foo(String s) {
-  if("a".length() > s.length() - 1) return false;
-  return s.startsWith(prefix, 1);
- }
-```
-
-https://github.com/navyxliu/StringFunc/blob/master/src/com/amazon/jdkteam/brownbag/SubstringAndStartsWith.java#L46
-
-Microbench suggests the throughput increases 2~12x when the length of substring ranges from 1 to 512. The gc allocation rate can reduce down to zero.
-
-This transformation reveals the potential of inter-procedural opportunity. Except intrinsics, C2 is not aware of any method of JRE. It can’t change any method automatically unless programmers tell it. If C2 late-inlines **String.substring** and **String.startsWith**, it could detect this pattern and simplify it. 
-
-2. substring|StringBuilder.append
-
+Example-2: append a substring to StringBuilder
 ```
  public static void toSB(String s, StringBuilder sb) {
   sb.append(s.substring(1));
  }
 ```
 
-![dontinline_substring_and_dontinline_append.png](resources/6215FD60DE005940A4FA4D8C5C8F74B3.png)
-
-Similar to the prior example, we can use API simplification to get:
-
-```
- public static void toSB(String s, StringBuilder sb) {
-   sb.append(s, 1, s.length());
- }
-```
-
-https://github.com/navyxliu/StringFunc/blob/master/src/com/amazon/jdkteam/brownbag/SubStrToStringBuilder.java#L39
-
-3. String.split() and pick one
-
+Example-3: implicit substrings from String.split
 ```
 public static String splitAndUse(String path) {
  return path.split("/")[0];
 }
 ```
+The following ideal graph depicts relevant nodes of Example-1 after Escape Analysis(EA). Hotspot C2 EA has successfully identified the substring object (`287 Allocate`) doesn't escape from the method.
+![dontinline_substring_but_inline_startswith.png](resources/poster_child_substring_2.png)
 
-It’s not uncommon to see Java programmers split a long string but only use a couple of results. If path can split into thousands of components, JavaVM actually returns an array filled with thousands of new substrings. Without inter-procedural analysis, C2 has no idea that only a small fraction of result are used.
-
-String.split() provides a less popular overloaded method split("regex", limit), which throttles the resulting array. After Inlining and constant propagation, C2 can infer the maximal index which accesses path.split("/"). If it is a constant, C2 can make use of the overloaded version of split().
-
+java.lang.String has a field value, which consists of the contents of String. EA marks it ArgEscape instead of NoEscape because its reference does escape to a function call aka pre-write barrier of G1 GC. The array object is `354 AllocateArray` in the Ideal graph.
 ```
-public String static splitAndUse(String path) {
- return path.split("/", 1/*limit*/)[0];
+public final class String {
+...
+    @Stable
+    private final byte[] value;
+...
 }
 ```
 
-https://github.com/navyxliu/StringFunc/blob/master/src/com/amazon/jdkteam/brownbag/SplitAndPick.java#L62
+After the String object and the array have been allocated and initialized, the last step is to fill in characters from its base string.
 
-### General solution outliner
+```
+final class StringLatin1 {
+...
+    public static String newString(byte[] val, int index, int len) {
+        if (len == 0) {
+            return "";
+        }
+        return new String(Arrays.copyOfRange(val, index, index + len),
+                          LATIN1);
+    }
+...
+```
 
-Technically speaking, JVM can waive all substring allocation if they are not escaped from the current method. C2 has to postpone to inline **String.substring** after Escape analysis to have the information.
+Arrays.copyOfRange() is `442 ArrayCopy` in the graph because it has intrinsified by C2. The inputs and outputs of the ArrayCopy Node is as follows. We use different colors to represent different JVMState.
+![poster_child_arraycopy_breakdown.png](resources/poster_child_arraycopy_breakdown.png)
 
-More aggressively, C2 can find all uses of String.value and change them to (BaseString.value + beginIdex). If this substring eventually escapes from fieldstore, return or callsite, it must retain at least one use. If this object is not escaped, optimizers of c2 can delete all nodes of String.substring() after inlining.
+There are some peculiar interesting properties for this ArrayCopy node.
+1. It is tightly coupled with `354 AllocateArray`
+2. the src type and dest type are both byte array (`332 ConP`)
+3. the dest is `371 CheckCastPP` pointing to the field byte[] value of j.l.String. The field is annotated with @Stable so Java runtimes do not alter its value after initialization.
+
+## Solution
+
+The optimization is to identify a creation pattern of temporary String. A string is temporary if it never makes it out of its method.
+
+In general, there are 3 nodes involved. The objective is to eliminate them all.
+1. Allocate node for the object of j.l.String
+2. AllocateArray node for the byte buffer of 1
+3. ArrayCopy node for 1 and 2
+
+We can define a new rewrite rule for ArrayCopy node. It is supposed to take effect in the IterGVN after Escape Analysis(EA) and before Macro Elimination(ME). The escapement information of all java objects has been computed in EA and saved in the connection graph.
+A rewrite rule can query escapement of a node using Node::_idx.
+```
+C->congraph()->ptnode_adr(idx) -> PointsToNode*
+```
+From an ArrayCopy(3), we check if it satisfies the properties 1-3 described above. We will inspect the associated Allocate(1) and see if its class is `java.lang.String` and its escapement is `NoEscape`. If the ArrayCopy and Allocate nodes meet all constraints, we can sure that it is the pattern of temporary String.
+Then, the AllocateArray(2) will be replaced with a new node which points to byte buffer of base string with an offset. We mark 2 and 3 are neither in use and let GVN do the job.
+We leave Allocate(1) alone on purpose because C2 can tell that it is scalar replaceable and ME will change all its fields to locals.
+
+## Implementation
+
+## Summary
