@@ -1,7 +1,7 @@
 # StringFunc
 to generate a self-contained jar file:
 ```
-./gradlew jmhJar 
+./gradlew jmhClasses jmhJar
 ```
 
 to run a specific microbench

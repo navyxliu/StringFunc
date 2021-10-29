@@ -4,7 +4,7 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.CRC32;
-import java.util.zip.CRC32C;
+//import java.util.zip.CRC32C;
 
 import org.openjdk.jmh.annotations.*;
 
@@ -37,10 +37,13 @@ public class CRCBenchmark {
         return crc.getValue();
     }
 
+/*
+    // comment out for jdk8, which lacks CRC32C
     @Benchmark
     public long jdkCastagnoliDirect() throws Exception {
         CRC32C crc = new CRC32C();
         crc.update(direct.duplicate());
         return crc.getValue();
     }
+ */
 }
